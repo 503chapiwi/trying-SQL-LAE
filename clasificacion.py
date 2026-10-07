@@ -23,7 +23,7 @@ CULTIVADOS = [
     'chipolin', 'chipilin',
     # hierbas / aromaticas
     'perejil', 'ajo', 'apio', 'cilantro', 'oregano', 'romero',
-    'hierba', 'hierba buena', 'hierbabuena', 'hirbabuena',
+    'hierba buena', 'hierbabuena', 'hirbabuena', 'hierba',   # 'hierba buena' first so it isn't stored as just 'hierba'
     'mashan', 'apazote', 'apasote',                # apazote misspelling
     'zacate', 'tusa', 'laurel', 'tomio', 'tomillo', 'albahaca',
     # granos frescos
@@ -31,7 +31,7 @@ CULTIVADOS = [
     'trigo', 'arveja', 'haba', 'azote',
     'ajonjoli', 'ajonjolin',                       # ajonjoli variant spelling
     # chiles cultivados (qualified only -- bare "chile" stays unmatched)
-    'chile pimiento', 'chile pimento', 'chile pimienta', 'chiles pimientos',            # pimento typo
+    'chile pimiento', 'chile pimento', 'chile pimienta',            # pimento typo
     'chile cobanero', 'chile verde', 'chile jalapeno', 'chile chiltepe',
     'chile dulce', 'chile morron',
     # frijol cultivado
@@ -75,6 +75,23 @@ ABARROTES = [
 ]
 
 
+# Spelling variant -> one product name, so the price table doesn't split
+# "banano" and "bananano" into two products. Keywords not listed here are
+# already their own product name.
+PRODUCTO_CANONICO = {
+    'bananano': 'banano', 'limom': 'limon', 'limo': 'limon', 'orandano': 'arandano',
+    'gusiquil': 'guisquil', 'guisqul': 'guisquil', 'brocoly': 'brocoli',
+    'chipolin': 'chipilin', 'hierbabuena': 'hierba buena', 'hirbabuena': 'hierba buena',
+    'apasote': 'apazote', 'tomio': 'tomillo', 'cabada': 'cebada', 'ajonjolin': 'ajonjoli',
+    'chile pimento': 'chile pimiento', 'chile pimienta': 'chile pimiento',
+    'achote': 'achiote', 'laure': 'laurel', 'pepitorio': 'pepitoria',
+    'mania': 'mani', 'manilla': 'mani', 'res': 'carne de res',
+    'espaqueti': 'espagueti', 'abena': 'avena',
+    'chow mein': 'chaomein', 'chao mein': 'chaomein', 'chaumein': 'chaomein', 'cahomein': 'chaomein',
+    'chila pasa': 'chile pasa', 'chile guaca': 'chile guaque',
+}
+
+
 def fuzzy_match_category(description, cultivados=CULTIVADOS, abarrotes=ABARROTES, threshold=80):
     """
     Accent-insensitive, word-boundary matching with Spanish plural tolerance.
@@ -104,7 +121,7 @@ def fuzzy_match_category(description, cultivados=CULTIVADOS, abarrotes=ABARROTES
 
 def clasificar_factura(factura):
     """
-    Adds 'categoria' and 'palabra_clave' to each line of a factura (from
+    Adds 'categoria', 'palabra_clave' and 'producto' to each line of a factura (from
     extraccion.procesar_pdf) and returns (agri_sum, abar_sum).
     Matching uses the full row text, as in the original tool.
     """
@@ -113,6 +130,7 @@ def clasificar_factura(factura):
         category, matched_word = fuzzy_match_category(linea['texto_fila'])
         linea['categoria'] = category
         linea['palabra_clave'] = matched_word
+        linea['producto'] = PRODUCTO_CANONICO.get(matched_word, matched_word) if matched_word else None
         if category == 'agricultura':
             agri_sum += linea['total']
         elif category == 'abarrotes':
