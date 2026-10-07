@@ -3,6 +3,7 @@ Reads one SAT FEL factura PDF and returns its data as a plain dict.
 No Streamlit and no Excel here, so it can be reused by the database step.
 """
 import re
+from datetime import date
 import pdfplumber
 from texto import normalize_text, clean_currency
 
@@ -10,6 +11,22 @@ from texto import normalize_text, clean_currency
 SKIP_KEYWORDS = ['totales', 'superintendencia', 'datos del certificador',
                  'contribuyendo', 'sujeto a pagos', 'no genera derecho',
                  'descripcion', 'cantidad', 'unitario', 'descuentos', 'impuestos']
+
+
+MESES = {'ene': 1, 'feb': 2, 'mar': 3, 'abr': 4, 'may': 5, 'jun': 6,
+         'jul': 7, 'ago': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dic': 12}
+
+UUID_RE = re.compile(r'\b([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})\b', re.IGNORECASE)
+
+# First word of the description -> unit. Matched by prefix, so plurals and
+# typos like 'unidadad' still map to 'unidad'.
+UNIDADES = ['unidad', 'libra', 'manojo', 'bolsa', 'onza', 'cabeza', 'rama', 'raja',
+            'botella', 'paquete', 'quintal', 'docena', 'caja', 'arroba', 'lata',
+            'frasco', 'galon', 'litro', 'kilo', 'racimo', 'ciento', 'fardo', 'costal',
+            'bandeja', 'canasta', 'mazo']
+
+# A line is flagged 'revisar' when cantidad x precio differs from the total by more than this
+TOLERANCIA_PRECIO = 0.02
 
 
 # --- ROW-LEVEL HELPERS (unchanged from the original tool) ---
@@ -170,6 +187,10 @@ def merge_split_rows(tables):
                         has_item_number = True
                         break
 
+            # The TOTALES row is never a continuation of a product description
+            if any(cell and normalize_text(str(cell)).strip().startswith('totales') for cell in next_row):
+                break
+
             has_numeric_value = False
             text_fragments = []
             for cell in next_row:
@@ -179,7 +200,10 @@ def merge_split_rows(tables):
                 if not cell_str:
                     continue
                 try:
-                    val = float(cell_str.replace(',', '.').replace(' ', ''))
+                    # Remove thousands commas: '14,146.60' must count as a number.
+                    # (Replacing ',' with '.' made it unparseable, so the TOTALES row
+                    # was merged into the last product row and that row was dropped.)
+                    val = float(cell_str.replace(',', '').replace(' ', ''))
                     if val > 0:
                         has_numeric_value = True
                         break
@@ -221,6 +245,88 @@ def merge_split_rows(tables):
         i = j
 
     return merged
+
+
+# --- DATABASE FIELDS (new in step 2) ---
+
+def _es_numero(cell):
+    """True only for cells that are purely a number ('1,327.50', '1.5'), not '500 GRAMOS'."""
+    if cell is None:
+        return False
+    return bool(re.fullmatch(r'\d[\d,]*(\.\d+)?', str(cell).strip()))
+
+
+def _indice_descripcion(row):
+    """Index of the description cell, using the same scoring as find_description_in_row."""
+    best_idx, best_score = None, 0
+    for idx, cell in enumerate(row):
+        if cell is None:
+            continue
+        cell_str = str(cell).strip()
+        if not cell_str or _es_numero(cell_str):
+            continue
+        cell_upper = cell_str.upper()
+        if cell_upper in ['BIEN', 'SERVICIO', 'B/S'] or cell_upper.startswith(('IVA', 'ISR')):
+            continue
+        letter_count = sum(1 for c in cell_str if c.isalpha())
+        if letter_count >= 3 and letter_count > best_score:
+            best_idx, best_score = idx, letter_count
+    return best_idx
+
+
+def extraer_cantidad_precio(row_tbl):
+    """
+    Anchored on the description cell rather than column positions, because columns
+    shift between pages: Cantidad is the nearest number BEFORE the description,
+    P. Unitario the first number AFTER it. Returns (cantidad, precio) or (None, None).
+    """
+    d = _indice_descripcion(row_tbl)
+    if d is None:
+        return None, None
+    antes = [c for c in row_tbl[:d] if _es_numero(c)]
+    despues = [c for c in row_tbl[d + 1:] if _es_numero(c)]
+    cantidad = clean_currency(antes[-1]) if antes else None
+    precio = clean_currency(despues[0]) if despues else None
+    return cantidad, precio
+
+
+def necesita_revision(cantidad, precio, total):
+    """Flags lines whose cantidad x precio doesn't match the total (bad extraction or a discount)."""
+    if not cantidad or not precio:
+        return True
+    return abs(cantidad * precio - total) > max(0.05, TOLERANCIA_PRECIO * total)
+
+
+def extraer_unidad(descripcion):
+    """'LIBRAS DE TOMATE' -> 'libra', 'unidadad de huevo' -> 'unidad', unknown -> None."""
+    m = re.match(r'\s*([a-z]+)', normalize_text(descripcion or ''))
+    if not m:
+        return None
+    for unidad in UNIDADES:
+        if m.group(1).startswith(unidad):
+            return unidad
+    return None
+
+
+def extraer_fecha(text):
+    """'Fecha y hora de emision: 23-mar-2026 21:31:51' -> date(2026, 3, 23)"""
+    m = re.search(r'Fecha\s*y\s*hora\s*de\s*emisi[óo]n:\s*(\d{1,2})-([a-zA-Z]{3})-(\d{4})', text, re.IGNORECASE)
+    if not m:
+        return None
+    mes = MESES.get(m.group(2).lower())
+    if not mes:
+        return None
+    try:
+        return date(int(m.group(3)), mes, int(m.group(1)))
+    except ValueError:
+        return None
+
+
+def extraer_autorizacion(text):
+    """The factura's UUID (Número de Autorización). It shares a line with Nit Emisor
+    in the extracted text, so it's found by its pattern rather than by its label."""
+    m = UUID_RE.search(text)
+    return m.group(1).upper() if m else None
 
 
 # --- FACTURA-LEVEL STEPS (pulled out of the original main loop) ---
@@ -326,7 +432,8 @@ def obtener_descripcion(row_tbl, desc_col_idx, row_text):
 
 
 def extraer_lineas(tables):
-    """Returns the product lines of a factura: [{'descripcion', 'texto_fila', 'total'}, ...]"""
+    """Returns the product lines of a factura: [{'descripcion', 'texto_fila', 'total',
+    'cantidad', 'precio_unitario', 'unidad', 'revisar'}, ...]"""
     total_col_idx, desc_col_idx = encontrar_columnas(tables)
     lineas = []
 
@@ -341,17 +448,23 @@ def extraer_lineas(tables):
         if val <= 0:
             continue
 
+        descripcion = obtener_descripcion(row_tbl, desc_col_idx, row_text)
+        cantidad, precio = extraer_cantidad_precio(row_tbl)
         lineas.append({
-            'descripcion': obtener_descripcion(row_tbl, desc_col_idx, row_text),
+            'descripcion': descripcion,
             'texto_fila': row_text,   # classification matches on the full row text
             'total': val,
+            'cantidad': cantidad,
+            'precio_unitario': precio,
+            'unidad': extraer_unidad(descripcion),
+            'revisar': necesita_revision(cantidad, precio, val),
         })
 
     return lineas
 
 
 def extraer_encabezado(text):
-    """NITs, issuer name, and school name from the factura text."""
+    """NITs, issuer name, school name, UUID, and date from the factura text."""
     nit_e_match = re.search(r'Emisor:\s*([0-9Kk\-]+)', text, re.I)
     nit_r_match = re.search(r'Receptor:\s*([0-9Kk\-]+)', text, re.I)
     name_e_match = re.search(r'(?:Factura(?:\s*Pequeño\s*Contribuyente)?)\s*\n+(.*?)\n+Nit\s*Emisor',
@@ -366,6 +479,8 @@ def extraer_encabezado(text):
         'nit_receptor': nit_r_match.group(1).strip() if nit_r_match else "N/A",
         'nombre_emisor': name_e,
         'nombre_escuela': extract_school_name(text),
+        'autorizacion': extraer_autorizacion(text),
+        'fecha': extraer_fecha(text),
     }
 
 
@@ -374,7 +489,7 @@ def procesar_pdf(archivo, nombre_archivo):
     Main entry point. `archivo` is a path or file-like object (e.g. a Streamlit upload).
     Returns None for non-standard documents (proformas, cotizaciones), otherwise:
         {'archivo', 'dte', 'nit_emisor', 'nit_receptor', 'nombre_emisor',
-         'nombre_escuela', 'lineas': [{'descripcion', 'texto_fila', 'total'}, ...]}
+         'nombre_escuela', 'autorizacion', 'fecha', 'lineas': [...see extraer_lineas]}
     """
     with pdfplumber.open(archivo) as pdf:
         text = "".join([p.extract_text() or "" for p in pdf.pages])
