@@ -4,6 +4,7 @@ from config import DEPARTAMENTO, MUNICIPIOS_OPCIONES, EXCEL_MAPPINGS
 from extraccion import procesar_pdf
 from clasificacion import clasificar_factura
 from reporte_excel import ReporteMAGA, PlantillaInvalidaError
+from db import conectar, crear_tablas, guardar_facturas
 
 # --- TRUCO CSS PARA TRADUCIR LA INTERFAZ A ESPAÑOL ---
 st.markdown("""
@@ -41,7 +42,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx and municipi
         # Validates the Excel template before reading any PDFs
         reporte = ReporteMAGA(uploaded_xlsx.read(), EXCEL_MAPPINGS)
 
-        facturas_procesadas = []   # Paso 2: these will be saved to the database
+        facturas_procesadas = []
         skipped_non_standard = []
         progress_bar = st.progress(0)
 
@@ -66,6 +67,21 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx and municipi
             success_msg += f"""\n\n⚠️ {unmatched_count} items sin clasificar encontrados. Están en la tercera hoja del archivo de Excel, 'Items sin Clasificar', para revisión manual.
                             Los totales de esos productos no fueron agregados a la cantidad de la primera hoja"""
         st.success(success_msg)
+
+        # Save to the database. A failure here never blocks the Excel report.
+        try:
+            with conectar() as con:
+                crear_tablas(con)
+                resultado = guardar_facturas(con, facturas_procesadas, DEPARTAMENTO, user_m_name)
+            db_msg = f"🗄️ {resultado['nuevas']} factura(s) guardadas en la base de datos."
+            if resultado['duplicadas']:
+                db_msg += f" {resultado['duplicadas']} ya estaban guardadas y no se duplicaron."
+            st.info(db_msg)
+            if resultado['sin_uuid']:
+                st.warning("⚠️ Estas facturas no tienen Número de Autorización legible y no se guardaron en la base de datos (sí están en el Excel):\n\n"
+                           + "\n".join(f"- {a}" for a in resultado['sin_uuid']))
+        except Exception as e:
+            st.warning(f"⚠️ El reporte de Excel está listo, pero no se pudo guardar en la base de datos: {e}")
 
         if skipped_non_standard:
             warning_msg = f"⚠️ **{len(skipped_non_standard)} factura(s) no estándar fueron ignoradas** (proformas, cotizaciones, u otros formatos no oficiales). Estas deben procesarse manualmente:\n\n"
