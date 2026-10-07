@@ -31,7 +31,7 @@ CULTIVADOS = [
     'trigo', 'arveja', 'haba', 'azote',
     'ajonjoli', 'ajonjolin',                       # ajonjoli variant spelling
     # chiles cultivados (qualified only -- bare "chile" stays unmatched)
-    'chile pimiento', 'chile pimento', 'chile pimienta',            # pimento typo
+    'chile pimiento', 'chile pimento', 'chile pimienta', 'chiles pimientos',            # pimento typo
     'chile cobanero', 'chile verde', 'chile jalapeno', 'chile chiltepe',
     'chile dulce', 'chile morron',
     # frijol cultivado
