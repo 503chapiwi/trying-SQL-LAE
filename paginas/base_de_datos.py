@@ -35,7 +35,12 @@ def q(sql, params=None):
         return con.execute(sql, params or []).df()
 
 
-if q("SELECT count(*) AS n FROM facturas")["n"][0] == 0:
+# Not cached: an empty result must never be remembered after receipts are saved
+with conectar() as con:
+    crear_tablas(con)
+    total_facturas = con.execute("SELECT count(*) FROM facturas").fetchone()[0]
+
+if total_facturas == 0:
     st.info("Todavía no hay facturas guardadas. Procese facturas en la página "
             "**Procesar facturas** y vuelva aquí.")
     st.stop()
