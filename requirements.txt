@@ -1,4 +1,0 @@
-openpyxl
-streamlit
-pdfplumber
-duckdb
