@@ -1,0 +1,19 @@
+# Database files (receipt data)
+*.duckdb
+*.duckdb.wal
+
+# Secrets: MotherDuck token and password
+.streamlit/secrets.toml
+.env
+
+# Real receipts and reports used for testing
+*.pdf
+*.xlsx
+*.xls
+
+# Files Python and editors generate
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
