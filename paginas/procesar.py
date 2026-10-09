@@ -77,6 +77,7 @@ if st.button("INICIAR PROCESO") and uploaded_pdfs and uploaded_xlsx and municipi
             if resultado['duplicadas']:
                 db_msg += f" {resultado['duplicadas']} ya estaban guardadas y no se duplicaron."
             st.info(db_msg)
+            st.cache_data.clear()  # so the Base de datos page shows the new receipts right away
             if resultado['sin_uuid']:
                 st.warning("⚠️ Estas facturas no tienen Número de Autorización legible y no se guardaron en la base de datos (sí están en el Excel):\n\n"
                            + "\n".join(f"- {a}" for a in resultado['sin_uuid']))
