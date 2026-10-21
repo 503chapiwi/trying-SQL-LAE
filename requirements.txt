@@ -1,5 +1,6 @@
 streamlit>=1.50
 pdfplumber
 openpyxl
-duckdb
+# MotherDuck only supports some DuckDB versions: check before changing this
+duckdb==1.5.3
 pandas
