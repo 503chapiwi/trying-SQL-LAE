@@ -26,11 +26,18 @@ def get_master_cell(ws, r_idx, c_idx):
     return cell
 
 
+# Per-receipt totals in 'Extra Detalles' (unclassified items are not included, as on the main sheet)
+COL_TOTAL_AGRI = 'Total Agricultura Familiar (Q)'
+COL_TOTAL_ABAR = 'Total Abarrotes (Q)'
+FORMATO_QUETZALES = '#,##0.00'
+
+
 def preparar_hojas(wb):
     """Creates (or reuses) the 'Extra Detalles' and 'Items Sin Clasificar' sheets."""
     if "Extra Detalles" not in wb.sheetnames:
         ws_det = wb.create_sheet("Extra Detalles")
-        ws_det.append(['Archivo PDF', 'Nombre Emisor', 'NIT Emisor', 'NIT Receptor', 'Nombre Escuela', 'Num. DTE', 'Municipio', 'Alerta % Abarrotes'])
+        ws_det.append(['Archivo PDF', 'Nombre Emisor', 'NIT Emisor', 'NIT Receptor', 'Nombre Escuela', 'Num. DTE', 'Municipio',
+                       COL_TOTAL_AGRI, COL_TOTAL_ABAR, 'Alerta % Abarrotes'])
     else:
         ws_det = wb["Extra Detalles"]
         # Excel files from older runs lack the 'Nombre Escuela' column:
@@ -38,6 +45,12 @@ def preparar_hojas(wb):
         if normalize_text(str(ws_det.cell(row=1, column=5).value or "")) != normalize_text("Nombre Escuela"):
             ws_det.insert_cols(5)
             ws_det.cell(row=1, column=5).value = "Nombre Escuela"
+        # Excel files from runs before the per-receipt totals lack those two columns:
+        # insert them before 'Alerta % Abarrotes' (old rows are left blank there).
+        if normalize_text(str(ws_det.cell(row=1, column=8).value or "")) != normalize_text(COL_TOTAL_AGRI):
+            ws_det.insert_cols(8, 2)
+            ws_det.cell(row=1, column=8).value = COL_TOTAL_AGRI
+            ws_det.cell(row=1, column=9).value = COL_TOTAL_ABAR
 
     if "Items Sin Clasificar" not in wb.sheetnames:
         ws_unmatched = wb.create_sheet("Items Sin Clasificar")
@@ -168,7 +181,10 @@ class ReporteMAGA:
 
         self.ws_det.append([factura['archivo'], factura['nombre_emisor'], factura['nit_emisor'],
                             factura['nit_receptor'], factura['nombre_escuela'], factura['dte'],
-                            m_name, alert_status])
+                            m_name, round(agri_sum, 2), round(abar_sum, 2), alert_status])
+        fila = self.ws_det.max_row
+        self.ws_det.cell(row=fila, column=8).number_format = FORMATO_QUETZALES
+        self.ws_det.cell(row=fila, column=9).number_format = FORMATO_QUETZALES
 
     @property
     def unmatched_count(self):
